@@ -7,6 +7,8 @@ import os
 from datetime import datetime, timedelta
 import urllib.parse
 
+from marathon_catalog import DEFAULT_RACE_NAME, get_fallback_route_points, get_race_config, get_race_names
+
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="TrackTheRunner",
@@ -38,20 +40,44 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── GPX path ──────────────────────────────────────────────────────────────────
-GPX_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Gasparilla Distance Classic Half Marathon.gpx")
+# ── GPX path / race config ──────────────────────────────────────────────────
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+RACE_COURSES_DIR = os.path.join(BASE_DIR, "race_courses")
 
 # ── GPX parsing ───────────────────────────────────────────────────────────────
 @st.cache_data
-def load_route():
-    with open(GPX_PATH, "r") as f:
+def load_route(gpx_path=None):
+    resolved_path = gpx_path
+    if not resolved_path or not os.path.exists(resolved_path):
+        # Fallback to Gasparilla if path not provided or doesn't exist
+        resolved_path = os.path.join(RACE_COURSES_DIR, "gasparilla_distance_classic_half_marathon.gpx")
+    if not os.path.exists(resolved_path):
+        return [(0.0, 0.0)]
+    with open(resolved_path, "r") as f:
         gpx = gpxpy.parse(f)
     points = []
     for track in gpx.tracks:
         for segment in track.segments:
             for pt in segment.points:
                 points.append((pt.latitude, pt.longitude))
-    return points
+    return points if points else [(0.0, 0.0)]
+
+
+def get_route_path(race_config):
+    gpx_path = race_config.get("gpx_path")
+    if gpx_path:
+        resolved_path = os.path.join(BASE_DIR, gpx_path)
+        if os.path.exists(resolved_path):
+            return resolved_path
+    return None
+
+
+def load_route_for_race(race_config):
+    route_path = get_route_path(race_config)
+    if route_path:
+        return load_route(route_path)
+    fallback_points = get_fallback_route_points(race_config.get("name"))
+    return [(lat, lon) for lat, lon in fallback_points]
 
 def haversine(lat1, lon1, lat2, lon2):
     R = 3958.8
@@ -77,7 +103,7 @@ def get_mile_markers(points):
 def pace_to_seconds(pace_min, pace_sec):
     return pace_min * 60 + pace_sec
 
-def build_schedule(start_dt, pace_secs, mile_markers, total_miles=13.1):
+def build_schedule(start_dt, pace_secs, mile_markers, total_miles):
     schedule = []
     for item in mile_markers:
         mile = item[0]
@@ -132,7 +158,6 @@ shared_mode = "name" in params
 
 # ── Main UI ───────────────────────────────────────────────────────────────────
 st.markdown('<div class="main-title">🏃 TrackTheRunner</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Gasparilla Distance Classic Half Marathon</div>', unsafe_allow_html=True)
 
 if not shared_mode:
     st.markdown("### Enter your race details")
@@ -142,8 +167,23 @@ if not shared_mode:
         bib = st.text_input("Bib number", placeholder="12345", key="bib_input")
     with col2:
         race_date = st.date_input("Race date", value=datetime(2026, 3, 1).date(), key="date_input")
-        start_hour = st.number_input("Start hour (24h)", min_value=0, max_value=23, value=6, key="hour_input")
-        start_min_input = st.number_input("Start minute", min_value=0, max_value=59, value=0, key="min_input")
+        time_col1, time_col2, time_col3 = st.columns(3)
+        with time_col1:
+            start_hour_12 = st.selectbox("Hour", options=list(range(1, 13)), format_func=lambda x: f"{x:02d}", key="hour_select")
+        with time_col2:
+            start_minute_str = st.selectbox("Minute", options=[f"{m:02d}" for m in range(0, 60, 5)], key="min_select")
+        with time_col3:
+            am_pm = st.selectbox("AM/PM", options=["AM", "PM"], key="am_pm_select")
+        
+        # Convert 12-hour to 24-hour format
+        start_hour = start_hour_12 if am_pm == "AM" and start_hour_12 != 12 else (0 if am_pm == "AM" and start_hour_12 == 12 else start_hour_12 + 12 if am_pm == "PM" and start_hour_12 != 12 else 12)
+        start_min_input = int(start_minute_str)
+
+    st.markdown("### Pick your marathon")
+    race_names = get_race_names()
+    selected_race_name = st.selectbox("Marathon", options=race_names, index=race_names.index(DEFAULT_RACE_NAME), key="race_select")
+    race_config = get_race_config(selected_race_name)
+    st.caption(f"{race_config['city']}, {race_config['country']} • {race_config['distance_miles']} miles")
 
     st.markdown("### Your expected pace")
     pcol1, pcol2 = st.columns(2)
@@ -157,6 +197,7 @@ if not shared_mode:
         st.session_state["bib"] = bib
         st.session_state["start_dt"] = datetime(race_date.year, race_date.month, race_date.day, start_hour, start_min_input)
         st.session_state["pace_secs"] = pace_to_seconds(pace_min, pace_sec)
+        st.session_state["selected_race_name"] = race_config["name"]
         st.session_state["generated"] = True
 
     if not st.session_state.get("generated"):
@@ -166,19 +207,26 @@ if not shared_mode:
     bib = st.session_state["bib"]
     start_dt = st.session_state["start_dt"]
     pace_secs = st.session_state["pace_secs"]
+    selected_race_name = st.session_state["selected_race_name"]
+    race_config = get_race_config(selected_race_name)
 
 else:
     runner_name = params.get("name", "Runner")
     bib = params.get("bib", "")
     start_dt = datetime.fromisoformat(params.get("start", datetime.now().isoformat()))
     pace_secs = int(params.get("pace", 600))
+    selected_race_name = params.get("race", DEFAULT_RACE_NAME)
+    race_config = get_race_config(selected_race_name)
+
+st.markdown(f'<div class="subtitle">{race_config["name"]} • {race_config["city"]}, {race_config["country"]}</div>', unsafe_allow_html=True)
 
 pace_min_disp, pace_sec_disp = divmod(pace_secs, 60)
-points = load_route()
+distance_miles = float(race_config.get("distance_miles", 13.1))
+points = load_route_for_race(race_config)
 mile_markers = get_mile_markers(points)
-schedule = build_schedule(start_dt, pace_secs, mile_markers)
+schedule = build_schedule(start_dt, pace_secs, mile_markers, total_miles=distance_miles)
 finish = schedule[-1]
-total_secs = int(13.1 * pace_secs)
+total_secs = int(distance_miles * pace_secs)
 h, rem = divmod(total_secs, 3600)
 m_dur, s_dur = divmod(rem, 60)
 duration_str = f"{h}h {m_dur}m"
@@ -224,6 +272,7 @@ if not shared_mode:
         "bib": bib,
         "start": start_dt.isoformat(),
         "pace": pace_secs,
+        "race": race_config["name"],
     })
     share_url = f"{base_url}?{share_params}"
     st.markdown(f"""
