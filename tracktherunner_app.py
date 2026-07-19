@@ -160,18 +160,19 @@ shared_mode = "name" in params
 st.markdown('<div class="main-title">🏃 TrackTheRunner</div>', unsafe_allow_html=True)
 
 if not shared_mode:
+    st.markdown("##### This tool helps you plan your marathon/half-marathon pace and share it with spectators. Use it to visualize your expected arrival times at each mile marker and the send the link at the bottom to anyone coming out to cheer you on!")
     st.markdown("### Enter your race details")
     col1, col2 = st.columns(2)
     with col1:
-        runner_name = st.text_input("Your name", placeholder="Vishwa", key="name_input")
+        runner_name = st.text_input("Your name", placeholder="John Doe", key="name_input")
         bib = st.text_input("Bib number", placeholder="12345", key="bib_input")
     with col2:
         race_date = st.date_input("Race date", value=datetime(2026, 3, 1).date(), key="date_input")
         time_col1, time_col2, time_col3 = st.columns(3)
         with time_col1:
-            start_hour_12 = st.selectbox("Hour", options=list(range(1, 13)), format_func=lambda x: f"{x:02d}", key="hour_select")
+            start_hour_12 = st.selectbox("Start Hour", options=list(range(1, 13)), format_func=lambda x: f"{x:02d}", key="hour_select")
         with time_col2:
-            start_minute_str = st.selectbox("Minute", options=[f"{m:02d}" for m in range(0, 60, 5)], key="min_select")
+            start_minute_str = st.selectbox("Start Minute", options=[f"{m:02d}" for m in range(0, 60, 5)], key="min_select")
         with time_col3:
             am_pm = st.selectbox("AM/PM", options=["AM", "PM"], key="am_pm_select")
         
@@ -179,9 +180,9 @@ if not shared_mode:
         start_hour = start_hour_12 if am_pm == "AM" and start_hour_12 != 12 else (0 if am_pm == "AM" and start_hour_12 == 12 else start_hour_12 + 12 if am_pm == "PM" and start_hour_12 != 12 else 12)
         start_min_input = int(start_minute_str)
 
-    st.markdown("### Pick your marathon")
+    st.markdown("### Pick your Marathon/Half-Marathon")
     race_names = get_race_names()
-    selected_race_name = st.selectbox("Marathon", options=race_names, index=race_names.index(DEFAULT_RACE_NAME), key="race_select")
+    selected_race_name = st.selectbox("Race", options=race_names, index=race_names.index(DEFAULT_RACE_NAME), key="race_select")
     race_config = get_race_config(selected_race_name)
     st.caption(f"{race_config['city']}, {race_config['country']} • {race_config['distance_miles']} miles")
 
